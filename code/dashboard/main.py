@@ -13,6 +13,7 @@ from keras.utils.vis_utils import plot_model
 from sklearn.preprocessing import MinMaxScaler
 import plotly.graph_objects as go
 import numpy as np
+import pandas as pd
 
 app = FastAPI()
 
@@ -146,6 +147,28 @@ def get_stock_chart(code: str):
             <h1>{code}</h1>
             <!-- Render the chart div -->
             {chart_html}
+                <input type="text" id="searchBox" placeholder="Enter number of days">
+                <button onclick="searchAPI()">Search</button>
+                <div id="results"></div>
+                <script>
+    function searchAPI() {{
+      var searchTerm = document.getElementById('searchBox').value;
+      var currentUrl = window.location.href;
+      fetch(currentUrl+'/prediction?q=' + encodeURIComponent(searchTerm))
+        .then(response => response.text())
+        .then(html => {{
+          document.getElementById('results').innerHTML = html;
+        }})
+        .catch(error => {{
+          console.error('Error:', error);
+        }});
+
+}}
+        function displayResults(data) {{
+      var resultsContainer = document.getElementById('results');
+      resultsContainer.innerHTML = data;
+        }}
+        </script>
         </body>
     </html>
     """
@@ -159,14 +182,17 @@ async def get_predictions_from_company(code: str, days: int = Query(default=5)):
     model = pickle.load(fl)
     fl = open(f"dataset/{code}.pkl", "rb")
     data = pickle.load(fl)
-    vec = list(data["Close"].values[-50:])
-    vec = scalers[code].fit_transform(vec)
+    vec = data["Close"].values[-50:]
+    vec = vec.reshape((-1, 1))
+    scaler = MinMaxScaler(feature_range=(0, 1))
+    vec = scaler.fit_transform(vec)
+    vec = [i[0] for i in vec]
     input_data = np.array(vec)  # Convert current_days_data to a numpy array
     # Reshape to match the input shape of the LSTM model
     input_data = np.reshape(input_data, (1, input_data.shape[0], 1))
     # Make predictions for the future 7 days
     predicted_prices = []
-    for _ in range(7):
+    for _ in range(days):
         # Use the LSTM model to predict the next day's price
         predicted_price = model.predict(input_data)
         # Append the predicted price to the list
@@ -175,6 +201,20 @@ async def get_predictions_from_company(code: str, days: int = Query(default=5)):
         vec.append(predicted_prices[-1])
         input_data = np.array(vec)
         input_data = np.reshape(input_data, (1, input_data.shape[0], 1))
-    predicted_prices = scalers[k].inverse_transform(predicted_prices)
-    print(predicted_prices)
-    return list(predicted_prices)
+    arr = np.array(predicted_prices)
+    arr = arr.reshape((-1, 1))
+    arr = scaler.inverse_transform(arr)
+    arr = arr.reshape(-1)
+    di = {i+1: float(arr[i]) for i in range(len(arr))}
+    fig = go.Figure(data=go.Scatter(
+        x=list(di.keys()), y=list(di.values())))
+    # Customize the chart layout
+    fig.update_layout(
+        title="Stock Price Chart",
+        xaxis_title="Days Ahead",
+        yaxis_title="Price",
+    )
+    # Convert the Plotly figure to HTML
+    chart_html = fig.to_html(full_html=False)
+
+    return chart_html
