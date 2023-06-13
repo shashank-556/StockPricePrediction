@@ -12,6 +12,7 @@ from sklearn.metrics import mean_absolute_error
 from keras.utils.vis_utils import plot_model
 from sklearn.preprocessing import MinMaxScaler
 import plotly.graph_objects as go
+import numpy as np
 
 app = FastAPI()
 
@@ -86,6 +87,11 @@ for k in symbols:
     scalers[k] = MinMaxScaler(feature_range=(0, 1))
 
 
+@app.get("")
+async def home():
+    return {"Details": "Stock Price Prediction by IT Group 10"}
+
+
 @app.post("/dataset/{code}", status_code=201)
 async def download_latest_dataset(code: str):
     if code not in symbols:
@@ -153,17 +159,22 @@ async def get_predictions_from_company(code: str, days: int = Query(default=5)):
     model = pickle.load(fl)
     fl = open(f"dataset/{code}.pkl", "rb")
     data = pickle.load(fl)
-    vec = data["Close"].values[-50:]
+    vec = list(data["Close"].values[-50:])
+    vec = scalers[code].fit_transform(vec)
     input_data = np.array(vec)  # Convert current_days_data to a numpy array
-    input_data = np.reshape(input_data, (1, input_data.shape[0], 1))  # Reshape to match the input shape of the LSTM model
-
+    # Reshape to match the input shape of the LSTM model
+    input_data = np.reshape(input_data, (1, input_data.shape[0], 1))
     # Make predictions for the future 7 days
     predicted_prices = []
     for _ in range(7):
-        predicted_price = model.predict(input_data)  # Use the LSTM model to predict the next day's price
-        predicted_prices.append(predicted_price[0, 0])  # Append the predicted price to the list
-
-        # Update the input data for the next prediction
-        input_data = np.append(input_data[:, 1:, :], [[predicted_price]], axis=1)
-
-    return predicted_prices
+        # Use the LSTM model to predict the next day's price
+        predicted_price = model.predict(input_data)
+        # Append the predicted price to the list
+        predicted_prices.append(predicted_price[0, 0])
+        vec.pop(0)
+        vec.append(predicted_prices[-1])
+        input_data = np.array(vec)
+        input_data = np.reshape(input_data, (1, input_data.shape[0], 1))
+    predicted_prices = scalers[k].inverse_transform(predicted_prices)
+    print(predicted_prices)
+    return list(predicted_prices)
